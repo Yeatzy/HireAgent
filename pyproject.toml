@@ -1,0 +1,20 @@
+[project]
+name = "hireagent"
+version = "0.1.0"
+description = "Evidence-grounded AI resume screening and interview question generator"
+requires-python = ">=3.10"
+dependencies = [
+  "fastapi",
+  "uvicorn[standard]",
+  "python-multipart",
+  "pydantic",
+  "langgraph",
+  "dashscope",
+  "pypdf",
+  "python-dotenv",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+

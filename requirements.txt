@@ -1,0 +1,9 @@
+fastapi==0.123.0
+uvicorn[standard]==0.35.0
+python-multipart==0.0.20
+pydantic==2.12.4
+langgraph==1.0.3
+dashscope==1.25.1
+pypdf==6.9.2
+python-dotenv==1.1.0
+

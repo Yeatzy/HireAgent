@@ -1,0 +1,2 @@
+"""HireAgent application package."""
+

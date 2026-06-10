@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="HireAgent AI 招聘助手" />
+    <title>HireAgent</title>
+    <link rel="stylesheet" href="/static/styles.css?v=20260610m" />
+  </head>
+  <body>
+    <div id="app" class="app-shell" data-theme="dark">
+      <aside class="sidebar">
+        <header class="brand">
+          <div class="brand-row">
+            <span class="brand-badge">AI Recruiting Copilot</span>
+            <div class="theme-switch" aria-label="切换主题">
+              <button id="light-theme" aria-label="切换到日间模式" title="日间模式">☀</button>
+              <button id="dark-theme" class="active" aria-label="切换到夜间模式" title="夜间模式">☾</button>
+            </div>
+          </div>
+          <h1>HireAgent</h1>
+          <p>简历解析、匹配评分与面试题生成工作台</p>
+        </header>
+
+        <nav class="sidebar-tabs" aria-label="侧边栏视图">
+          <button class="sidebar-tab active" type="button" data-sidebar-view="input">新分析</button>
+          <button class="sidebar-tab" type="button" data-sidebar-view="memory">
+            分析记忆 <span id="memory-tab-count">0</span>
+          </button>
+        </nav>
+
+        <section class="input-panel">
+          <div class="field-heading">
+            <label class="field-label" for="jd-text">职位描述</label>
+            <span id="jd-char-count" class="char-count">0 字</span>
+          </div>
+          <textarea
+            id="jd-text"
+            class="jd-textarea"
+            placeholder="在此粘贴完整的职位描述，包括岗位职责、任职要求和加分项..."
+          ></textarea>
+          <div class="input-divider"><span>或上传文件</span></div>
+          <label class="file-drop compact" for="jd-file">
+            <input id="jd-file" type="file" accept=".pdf,.docx,.txt,.md" />
+            <strong>选择 JD 文件</strong>
+            <span id="jd-file-name">PDF、Word 或文本</span>
+          </label>
+
+          <label class="field-label" for="resume-files">候选人简历</label>
+          <label class="file-drop" for="resume-files">
+            <input id="resume-files" type="file" accept=".pdf,.docx,.txt,.md" multiple />
+            <strong>上传简历</strong>
+            <span id="resume-file-name">支持多选，最多 10 份</span>
+          </label>
+
+          <div id="selected-files" class="selected-files"></div>
+
+          <button id="analyze-btn" class="primary-btn" type="button">开始分析</button>
+          <p id="service-state" class="service-state">正在检查服务状态...</p>
+        </section>
+
+        <section class="memory-panel hidden">
+          <div class="memory-heading">
+            <div>
+              <p class="panel-title">分析记忆</p>
+              <p id="memory-summary" class="memory-summary">正在读取历史记录...</p>
+            </div>
+            <button id="refresh-memory" class="icon-btn" type="button" aria-label="刷新历史记录" title="刷新历史记录">↻</button>
+          </div>
+          <div id="memory-list" class="memory-list"></div>
+        </section>
+
+        <section class="workflow-panel">
+          <p class="panel-title">执行链路</p>
+          <ol id="workflow-trace">
+            <li>等待任务</li>
+          </ol>
+        </section>
+      </aside>
+
+      <main class="workspace">
+        <header class="workspace-header">
+          <div>
+            <h2 id="job-title">候选人评估看板</h2>
+            <p id="job-meta">上传 JD 与简历开始分析</p>
+          </div>
+          <div class="header-status">
+            <span id="ai-status" class="status-chip">模型状态检查中</span>
+            <span id="feedback-status" class="status-chip">反馈飞轮 0</span>
+            <span id="audit-status" class="status-chip">质量审计待运行</span>
+            <span id="candidate-count" class="status-chip">0 位候选人</span>
+            <a id="report-link" class="status-chip report-link hidden" href="#" download>导出报告</a>
+          </div>
+        </header>
+
+        <section id="job-profile-panel" class="job-profile-panel hidden">
+          <div>
+            <p class="eyebrow">Structured JD</p>
+            <h3>岗位画像</h3>
+          </div>
+          <div class="job-profile-grid">
+            <div>
+              <span>核心要求</span>
+              <div id="job-required-tags" class="tag-list"></div>
+            </div>
+            <div>
+              <span>加分项</span>
+              <div id="job-preferred-tags" class="tag-list"></div>
+            </div>
+            <div>
+              <span>门槛</span>
+              <strong id="job-threshold">未明确</strong>
+            </div>
+          </div>
+        </section>
+
+        <div id="empty-state" class="empty-state">
+          <div class="empty-mark">H</div>
+          <h3>等待招聘分析任务</h3>
+          <p>分析完成后，这里会展示候选人排序、证据、面试题和追问。</p>
+        </div>
+
+        <section id="result-view" class="result-view hidden">
+          <div class="ranking-panel">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow">Candidate Ranking</p>
+                <h3>候选人排名</h3>
+              </div>
+              <span id="analysis-id" class="analysis-id"></span>
+            </div>
+            <div id="candidate-list" class="candidate-list"></div>
+          </div>
+
+          <div class="detail-panel">
+            <div id="candidate-header" class="candidate-header"></div>
+            <nav class="tabs" aria-label="候选人详情">
+              <button class="tab active" data-tab="overview">评估概览</button>
+              <button class="tab" data-tab="questions">面试题</button>
+              <button class="tab" data-tab="followups">追问与风险</button>
+              <button class="tab" data-tab="evidence">简历证据</button>
+              <button class="tab" data-tab="feedback">人工复核</button>
+            </nav>
+            <div id="tab-content" class="tab-content"></div>
+          </div>
+        </section>
+      </main>
+    </div>
+    <script src="/static/app.js?v=20260610m"></script>
+  </body>
+</html>
