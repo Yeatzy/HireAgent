@@ -33,12 +33,6 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-复制环境变量文件：
-
-```bash
-cp .env.example .env
-```
-
 编辑 `.env`：
 
 ```env
