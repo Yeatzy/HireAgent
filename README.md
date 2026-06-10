@@ -1,5 +1,3 @@
-
-https://github.com/user-attachments/assets/bb17bf1e-a2db-4452-9abf-2415f09b7f01
 # HireAgent
 
 HireAgent 是一个端到端的 AI 招聘助手 Demo，主线是“智能简历解析与试题生成”。
