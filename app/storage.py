@@ -13,6 +13,7 @@ from .schemas import (
     CandidateFeedbackInput,
     FeedbackStats,
 )
+from .text_hygiene import normalize_payload_text
 
 
 FEEDBACK_GUIDANCE = {
@@ -113,7 +114,9 @@ class AnalysisStore:
             ).fetchone()
         if not row:
             return None
-        return AnalysisResult.model_validate(json.loads(row["result_json"]))
+        return AnalysisResult.model_validate(
+            normalize_payload_text(json.loads(row["result_json"]))
+        )
 
     def delete(self, analysis_id: str) -> bool:
         with closing(self._connect()) as connection:
@@ -198,6 +201,7 @@ class AnalysisStore:
             return None
         payload = dict(row)
         payload["issue_types"] = json.loads(payload.pop("issue_types_json"))
+        payload = normalize_payload_text(payload)
         return CandidateFeedback.model_validate(payload)
 
     def feedback_stats(self, limit: int = 200) -> FeedbackStats:

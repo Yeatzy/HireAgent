@@ -13,6 +13,7 @@ from .guardrails import (
 from .llm import QwenClient
 from .prompts import JD_EXTRACTION_PROMPT, RESUME_EXTRACTION_PROMPT
 from .schemas import CandidateProfile, Evidence, JobProfile
+from .text_hygiene import prefer_chinese_duplicate_text
 
 
 SKILL_ALIASES = {
@@ -54,6 +55,10 @@ NAME_STOPWORDS = {
     "项目经验",
 }
 
+NAME_OCR_SURNAME_CORRECTIONS = {
+    "将": "蒋",
+}
+
 LLM_CONTEXT_KEYWORDS = {
     "姓名", "name", "教育", "学历", "本科", "硕士", "博士", "专业", "学校",
     "实习", "项目", "职责", "负责", "主导", "参与", "推动",
@@ -63,10 +68,71 @@ LLM_CONTEXT_KEYWORDS = {
     "小红书", "抖音", "短视频", "自动化", "运营", "内容", "ai",
 }
 
+QUANTITATIVE_PATTERN = re.compile(
+    r"\d{1,3}(?:,\d{3})+\+?"
+    r"|\d+(?:\.\d+)?%"
+    r"|\d+\+"
+    r"|\d+(?:\.\d+)?\s*(?:万|千|百|w|W)\+?"
+)
+ACHIEVEMENT_CONTEXT_PATTERN = re.compile(
+    r"提升|增长|降低|转化|粉丝|播放|营收|样本|准确率|效率|成本|噪声|量化|"
+    r"built|developed|reduced|increased|improved|delivered|generated|"
+    r"samples|accuracy|revenue|cost|noise|quantitative",
+    flags=re.IGNORECASE,
+)
+
 
 def _sentences(text: str) -> list[str]:
-    values = re.split(r"[\n。；;]+", text)
+    normalized = re.sub(r"\s*([•●▪◆])\s*", r"\n\1 ", text)
+    normalized = re.sub(
+        r"\s+(EDUCATION|INTERNSHIP(?: AND BUSINESS COMPETITION)? EXPERIENCE|"
+        r"RESEARCH EXPERIENCE|EXTRACURRICULAR ACTIVITIES|SKILLS AND OTHERS)\b",
+        r"\n\1",
+        normalized,
+        flags=re.IGNORECASE,
+    )
+    normalized = re.sub(
+        r"\s+(教育背景|实习及商赛经历|实习经历|科研经历|项目经历|社会工作|技能及其他)\s+",
+        r"\n\1 ",
+        normalized,
+    )
+    normalized = re.sub(r"(?<=[A-Za-z0-9\)])\.\s+(?=[A-Z•●▪◆])", ".\n", normalized)
+    values = re.split(r"[\n。；;]+", normalized)
     return [item.strip(" -•\t") for item in values if len(item.strip()) >= 4]
+
+
+def _is_achievement_item(item: str) -> bool:
+    return bool(
+        QUANTITATIVE_PATTERN.search(item)
+        and ACHIEVEMENT_CONTEXT_PATTERN.search(item)
+    )
+
+
+def _trim_achievement_item(item: str, limit: int = 220) -> str:
+    normalized = re.sub(r"\s+", " ", item).strip(" -•\t")
+    if len(normalized) <= limit:
+        return normalized
+    fragments = _sentences(normalized)
+    for fragment in fragments:
+        if _is_achievement_item(fragment):
+            return fragment[:limit].rstrip()
+    match = QUANTITATIVE_PATTERN.search(normalized)
+    if not match:
+        return normalized[:limit].rstrip()
+    start = max(0, match.start() - limit // 2)
+    end = min(len(normalized), start + limit)
+    return normalized[start:end].strip(" ，,。.;；:-")
+
+
+def _achievement_items(sentences: list[str]) -> list[str]:
+    achievements: list[str] = []
+    for item in sentences:
+        if not _is_achievement_item(item):
+            continue
+        trimmed = _trim_achievement_item(item)
+        if trimmed and trimmed not in achievements:
+            achievements.append(trimmed)
+    return achievements
 
 
 def _llm_context_limit(llm: QwenClient) -> int:
@@ -258,6 +324,11 @@ def _extract_name_from_filename(filename: str) -> str:
 
 
 def _extract_candidate_name(filename: str, text: str) -> str:
+    def normalize_name_ocr(value: str) -> str:
+        if len(value) in {2, 3, 4}:
+            return NAME_OCR_SURNAME_CORRECTIONS.get(value[0], value[0]) + value[1:]
+        return value
+
     for line in text.splitlines()[:20]:
         match = re.search(r"(?:姓名|Name)\s*[:：]\s*([\u4e00-\u9fff]{2,4})", line, flags=re.IGNORECASE)
         if match and _is_plausible_name(match.group(1)):
@@ -268,8 +339,8 @@ def _extract_candidate_name(filename: str, text: str) -> str:
     for line in text.splitlines()[:8]:
         candidate = line.strip(" -•\t:：|")
         if _is_plausible_name(candidate):
-            return candidate
-    return filename_name
+            return normalize_name_ocr(candidate)
+    return normalize_name_ocr(filename_name)
 
 
 def _top_keywords(text: str, limit: int = 12) -> list[str]:
@@ -340,7 +411,7 @@ def extract_candidate_profile(
     reliability_guidance: list[str] | None = None,
 ) -> CandidateProfile:
     task = f"resume_extraction:{filename}"
-    grounded_source = sanitize_untrusted_text(text)
+    grounded_source = prefer_chinese_duplicate_text(sanitize_untrusted_text(text))
     sentences = _sentences(grounded_source)
     fallback_name = _extract_candidate_name(filename, grounded_source)
     skills = _find_skills(grounded_source)
@@ -349,10 +420,7 @@ def extract_candidate_profile(
         for skill in skills
         if (snippet := _find_evidence(grounded_source, skill))
     ]
-    achievements = [
-        item for item in sentences
-        if re.search(r"\d+%|\d+[万千百+]|提升|增长|降低|粉丝|播放|转化", item)
-    ][:8]
+    achievements = _achievement_items(sentences)[:8]
     fallback = CandidateProfile(
         candidate_id=candidate_id,
         source_file=filename,
@@ -394,10 +462,8 @@ def extract_candidate_profile(
         grounded_source,
         fallback.experience_highlights,
     )[:8]
-    profile.achievements = grounded_items(
-        profile.achievements,
-        grounded_source,
-        fallback.achievements,
+    profile.achievements = _achievement_items(
+        grounded_items(profile.achievements, grounded_source, fallback.achievements)
     )[:8]
     profile.evidence = [
         Evidence(field=f"技能:{skill}", snippet=snippet)

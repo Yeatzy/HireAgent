@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+
 from .guardrails import (
     follow_up_is_grounded,
     question_is_grounded,
@@ -24,6 +26,77 @@ def _question(
     )
 
 
+def _clean_fact(value: str, limit: int = 80) -> str:
+    cleaned = re.sub(r"\s+", " ", value).strip(" -•\t")
+    if len(cleaned) <= limit:
+        return cleaned
+    return cleaned[:limit].rstrip(" ，,。.;；") + "..."
+
+
+def _unique_facts(items: list[str], limit: int = 8) -> list[str]:
+    facts: list[str] = []
+    for item in items:
+        fact = _clean_fact(item)
+        if fact and fact not in facts:
+            facts.append(fact)
+        if len(facts) >= limit:
+            break
+    return facts
+
+
+def _candidate_facts(profile) -> list[str]:
+    evidence_snippets = [item.snippet for item in profile.evidence]
+    return _unique_facts(
+        [
+            *profile.achievements,
+            *profile.experience_highlights,
+            *evidence_snippets,
+        ],
+        limit=10,
+    )
+
+
+def _fact_at(facts: list[str], index: int, fallback: str) -> str:
+    if facts:
+        return facts[index % len(facts)]
+    return fallback
+
+
+def _fallback_followups(
+    job: JobProfile,
+    assessment: CandidateAssessment,
+    facts: list[str],
+) -> list[str]:
+    profile = assessment.profile
+    follow_ups: list[str] = []
+
+    if profile.achievements:
+        follow_ups.append(
+            f"简历写到“{_clean_fact(profile.achievements[0])}”，请补充这个结果的口径、基线和你个人负责的部分。"
+        )
+    if profile.experience_highlights:
+        follow_ups.append(
+            f"围绕“{_clean_fact(profile.experience_highlights[0])}”，请说明任务起点、关键动作和最终交付物。"
+        )
+    if profile.evidence:
+        evidence = profile.evidence[0]
+        follow_ups.append(
+            f"你在“{_clean_fact(evidence.snippet)}”中体现了“{evidence.field.removeprefix('技能:')}”，请展开具体使用场景。"
+        )
+    for risk in profile.risks[:2]:
+        follow_ups.append(f"简历中提示“{risk}”，请用一个具体项目补充背景、职责和可验证结果。")
+    for item in assessment.missing_requirements[:2]:
+        follow_ups.append(f"JD 要求“{item}”，但简历中缺少直接证据。请说明是否有相关经历，并给出具体案例。")
+    if not follow_ups and facts:
+        follow_ups.append(
+            f"请围绕“{facts[0]}”说明你独立完成了哪些部分，哪些依赖团队协作。"
+        )
+    while len(follow_ups) < 3:
+        focus = _fact_at(facts, len(follow_ups), job.title)
+        follow_ups.append(f"请基于“{focus}”补充一个可量化的评价标准，以及当时如何确认结果有效。")
+    return list(dict.fromkeys(follow_ups))[:5]
+
+
 def generate_questions(
     job: JobProfile,
     assessment: CandidateAssessment,
@@ -33,81 +106,79 @@ def generate_questions(
 ) -> tuple[list[InterviewQuestion], list[str]]:
     profile = assessment.profile
     matched = assessment.matched_requirements
-    missing = assessment.missing_requirements
     primary_skill = matched[0] if matched else (job.required_skills[0] if job.required_skills else "岗位核心能力")
     second_skill = matched[1] if len(matched) > 1 else primary_skill
+    facts = _candidate_facts(profile)
+    fact_0 = _fact_at(facts, 0, profile.source_file)
+    fact_1 = _fact_at(facts, 1, fact_0)
+    fact_2 = _fact_at(facts, 2, fact_1)
+    achievement = _clean_fact(profile.achievements[0]) if profile.achievements else fact_0
+    highlight = _clean_fact(profile.experience_highlights[0]) if profile.experience_highlights else fact_1
+    evidence = _clean_fact(profile.evidence[0].snippet) if profile.evidence else fact_2
 
     questions = [
         _question(
-            f"请用 3 分钟介绍一段最能证明你适合“{job.title}”的经历。",
+            f"请围绕简历中的“{highlight}”，用 3 分钟说明这段经历为什么能证明你适合“{job.title}”。",
             "岗位动机与经历概括",
             "基础",
             ["说明个人职责", "给出具体行动", "说明结果与岗位关联"],
         ),
         _question(
-            f"请详细拆解你在“{primary_skill}”方面最有代表性的项目。",
+            f"简历中与“{primary_skill}”相关的证据是“{evidence}”。请详细拆解当时的场景、方法和你的贡献。",
             f"{primary_skill} 实战深度",
             "进阶",
             ["场景真实", "方法清晰", "能说明个人贡献", "有结果或复盘"],
         ),
         _question(
-            f"如果让你在两周内完成一个与“{second_skill}”相关的新任务，你会如何规划？",
+            f"基于你做过的“{fact_1}”，如果两周内接到一个与“{second_skill}”相关的新任务，你会如何迁移经验并规划交付？",
             "任务拆解与执行",
             "进阶",
             ["目标拆解合理", "明确资源与风险", "设置验证指标"],
         ),
         _question(
-            "请举例说明你如何使用数据判断一个方案应该继续、调整还是停止。",
+            f"请结合“{achievement}”说明你当时如何定义指标，并判断方案应该继续、调整还是停止。",
             "数据意识",
             "进阶",
             ["指标与目标一致", "能解释数据变化", "有决策闭环"],
         ),
         _question(
-            "请讲一个你与业务、产品或技术团队意见不一致的案例。",
+            f"围绕“{fact_2}”，请讲一个你和业务、产品或技术团队需要对齐判断的细节。",
             "跨团队协作",
             "进阶",
             ["能理解不同立场", "沟通方式具体", "结果可验证"],
         ),
         _question(
-            "请讲一个结果不理想的项目。你如何定位原因并完成复盘？",
+            f"请从“{fact_0}”中选择一个不确定或结果不完全理想的环节，说明你如何定位原因并复盘。",
             "失败复盘",
             "挑战",
             ["不回避失败", "区分事实与判断", "提出后续改进"],
         ),
         _question(
-            "面对需求模糊、信息不足的任务，你通常先确认哪些问题？",
+            f"在“{fact_1}”这类任务中，如果需求模糊或信息不足，你会优先确认哪些问题？",
             "需求澄清",
             "基础",
             ["识别关键约束", "明确交付标准", "能管理不确定性"],
         ),
         _question(
-            "当时间有限时，你如何确定任务优先级，并向相关方解释取舍？",
+            f"结合“{fact_2}”，当时间有限时，你如何确定优先级，并向相关方解释取舍？",
             "优先级与推动力",
             "进阶",
             ["取舍标准明确", "识别关键路径", "沟通透明"],
         ),
         _question(
-            f"你认为“{job.title}”在入职前三个月最应该建立哪些工作机制？",
+            f"参考你简历中的“{fact_0}”，你认为“{job.title}”入职前三个月最应该建立哪些工作机制？",
             "岗位理解",
             "挑战",
             ["理解岗位目标", "建议可执行", "有阶段性指标"],
         ),
         _question(
-            "如果你发现 AI 生成的内容看起来合理但缺少可靠依据，你会如何验证？",
+            f"如果“{fact_1}”相关产出中出现 AI 生成内容看似合理但缺少可靠依据的情况，你会如何验证？",
             "AI 风险意识",
             "挑战",
             ["检查来源", "交叉验证", "说明不确定性", "保留人工复核"],
         ),
     ]
-    follow_ups = [
-        f"简历中提到“{risk}”，请补充具体背景、你的职责和最终结果。"
-        for risk in profile.risks[:3]
-    ]
-    for item in missing[:2]:
-        follow_ups.append(f"JD 要求“{item}”，但简历中缺少直接证据。你是否有相关经历？")
-    while len(follow_ups) < 3:
-        follow_ups.append("请说明你在代表性项目中的个人贡献比例，以及哪些工作由你独立完成。")
-    follow_ups = follow_ups[:5]
+    follow_ups = _fallback_followups(job, assessment, facts)
 
     task = f"question_refinement:{profile.source_file}"
     payload = llm.call_json(

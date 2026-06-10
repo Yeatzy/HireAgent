@@ -11,7 +11,6 @@ const state = {
 
 const ACTIVE_ANALYSIS_KEY = "hireagent-active-analysis";
 const VIEW_MEMORY_KEY = "hireagent-view-memory";
-const JD_DRAFT_KEY = "hireagent-jd-draft";
 const SIDEBAR_VIEW_KEY = "hireagent-sidebar-view";
 const FEEDBACK_ISSUES = {
   hallucinated_skill: "技能幻觉",
@@ -737,7 +736,6 @@ const loadFeedbackStats = async () => {
 $("#jd-file").addEventListener("change", updateSelectedFiles);
 $("#jd-text").addEventListener("input", () => {
   updateSelectedFiles();
-  localStorage.setItem(JD_DRAFT_KEY, $("#jd-text").value);
 });
 $("#resume-files").addEventListener("change", updateSelectedFiles);
 $("#analyze-btn").addEventListener("click", analyzeUploads);
@@ -759,7 +757,8 @@ $$(".tab").forEach((tab) => {
 const initialize = async () => {
   setTheme(localStorage.getItem("hireagent-theme") || "dark");
   setSidebarView(localStorage.getItem(SIDEBAR_VIEW_KEY) || "input");
-  $("#jd-text").value = localStorage.getItem(JD_DRAFT_KEY) || "";
+  localStorage.removeItem("hireagent-jd-draft");
+  $("#jd-text").value = "";
   updateSelectedFiles();
   await Promise.all([
     checkHealth(),

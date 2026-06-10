@@ -14,12 +14,14 @@ from xml.etree import ElementTree
 from pypdf import PdfReader
 
 from .config import PROJECT_ROOT
+from .text_hygiene import clean_text_encoding, decode_text_bytes, prefer_chinese_duplicate_text
 
 
 WORD_NS = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 TESSDATA_DIR = PROJECT_ROOT / "assets" / "tessdata"
 MIN_USEFUL_TEXT_LENGTH = 20
 OCR_TRIGGER_LENGTH = 80
+SUSPICIOUS_TEXT_LAYER_RATIO = 0.08
 
 
 class UnsupportedDocumentError(ValueError):
@@ -34,6 +36,7 @@ class ParsedDocument:
 
 
 def _normalize_text(text: str) -> str:
+    text = clean_text_encoding(text)
     text = text.replace("\u00a0", " ").replace("\r\n", "\n").replace("\r", "\n")
     text = re.sub(r"[ \t]+", " ", text)
     text = re.sub(r"\n{3,}", "\n\n", text)
@@ -56,6 +59,22 @@ def _parse_docx(data: bytes) -> str:
 def _parse_pdf(data: bytes) -> str:
     reader = PdfReader(io.BytesIO(data))
     return "\n".join(page.extract_text() or "" for page in reader.pages)
+
+
+def _pdf_text_layer_is_suspicious(text: str) -> bool:
+    if not text.strip():
+        return False
+    chars = [char for char in text if not char.isspace()]
+    if not chars:
+        return False
+    cjk_count = sum("\u4e00" <= char <= "\u9fff" for char in chars)
+    suspicious_count = sum(
+        "\u0370" <= char <= "\u1fff"
+        or "\u0b00" <= char <= "\u0fff"
+        or "\u1780" <= char <= "\u18af"
+        for char in chars
+    )
+    return cjk_count == 0 and suspicious_count / len(chars) >= SUSPICIOUS_TEXT_LAYER_RATIO
 
 
 def _page_number(path: Path) -> int:
@@ -146,7 +165,7 @@ def parse_document_with_metadata(filename: str, data: bytes) -> ParsedDocument:
     warning = ""
     used_ocr = False
     if suffix in {".txt", ".md"}:
-        text = data.decode("utf-8", errors="replace")
+        text = decode_text_bytes(data)
     elif suffix == ".docx":
         text = _parse_docx(data)
     elif suffix == ".pdf":
@@ -154,15 +173,21 @@ def parse_document_with_metadata(filename: str, data: bytes) -> ParsedDocument:
             text = _parse_pdf(data)
         except Exception:
             text = ""
-        if len(_normalize_text(text)) < OCR_TRIGGER_LENGTH:
+        normalized_text = _normalize_text(text)
+        should_use_ocr = (
+            len(normalized_text) < OCR_TRIGGER_LENGTH
+            or _pdf_text_layer_is_suspicious(normalized_text)
+        )
+        if should_use_ocr:
             ocr_text = _ocr_pdf(data)
-            if len(_normalize_text(ocr_text)) > len(_normalize_text(text)):
+            if len(_normalize_text(ocr_text)) > len(normalized_text):
                 text = ocr_text
                 used_ocr = True
-                warning = f"{filename} 为扫描版或文字层异常，已自动使用 OCR 识别"
+                warning = f"{filename} 为扫描版或文字层编码异常，已自动使用 OCR 识别"
     else:
         raise UnsupportedDocumentError(f"暂不支持 {suffix or '无扩展名'} 文件")
     text = _normalize_text(text)
+    text = prefer_chinese_duplicate_text(text)
     if len(text) < MIN_USEFUL_TEXT_LENGTH:
         stem = Path(filename).stem
         fallback = f"文件名称：{stem}\n该文档可提取文字较少，请结合原始简历人工核验。"

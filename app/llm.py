@@ -10,6 +10,7 @@ from typing import Any
 
 from .config import Settings
 from .schemas import ModelCallTrace
+from .text_hygiene import normalize_payload_text
 
 
 logger = logging.getLogger("hireagent")
@@ -90,7 +91,7 @@ class QwenClient:
         value = json.loads(cleaned)
         if not isinstance(value, dict):
             raise ValueError("模型输出不是 JSON 对象")
-        return value
+        return normalize_payload_text(value)
 
     def call_json(
         self,
